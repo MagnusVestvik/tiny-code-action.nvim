@@ -10,43 +10,46 @@ local apply_edit = require("tiny-code-action.edit").apply_edit
 --- @param bufnr number|nil: The original buffer number to restore before executing.
 --- @return No return value. The function operates by side effects, applying the action in the given context.
 function M.apply(action, client, ctx, bufnr)
-  if action == nil then
-    vim.notify("Error: No action to apply/action can't be applied", vim.log.levels.ERROR)
-    return
-  end
+	if action == nil then
+		vim.notify("Error: No action to apply/action can't be applied", vim.log.levels.ERROR)
+		return
+	end
 
-  if not ctx then
-    ctx = {}
-  end
+	if not ctx then
+		ctx = {}
+	end
 
-  -- restore the original buffer context
-  if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
-    local win = vim.fn.bufwinid(bufnr)
-    if win ~= -1 then
-      vim.api.nvim_set_current_win(win)
-    end
-  end
+	-- restore the original buffer context
+	if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
+		local win = vim.fn.bufwinid(bufnr)
+		if win ~= -1 then
+			vim.api.nvim_set_current_win(win)
+		end
+	end
 
-  if action.edit then
-    vim.lsp.util.apply_workspace_edit(action.edit, client.offset_encoding)
-  end
+	if action.edit then
+		vim.lsp.util.apply_workspace_edit(action.edit, client.offset_encoding)
+	end
 
-  local a_cmd = action.command
-  if a_cmd then
-    local command
-    if type(a_cmd) == "table" then
-      command = a_cmd
-    else
-      command = action
-    end
+	local a_cmd = action.command
+	local cmd_name = (type(a_cmd) == "table" and a_cmd.command) or nil
+	local is_jdtls_workspace_edit_cmd = cmd_name == "java.apply.workspaceEdit"
 
-    -- Fix for nighly build
-    if client._exec_cmd then
-      client:_exec_cmd(command, ctx)
-    else
-      client:exec_cmd(command, ctx)
-    end
-  end
+	if a_cmd and not (action.edit and is_jdtls_workspace_edit_cmd) then
+		local command
+		if type(a_cmd) == "table" then
+			command = a_cmd
+		else
+			command = action
+		end
+
+		-- Fix for nighly build
+		if client._exec_cmd then
+			client:_exec_cmd(command, ctx)
+		else
+			client:exec_cmd(command, ctx)
+		end
+	end
 end
 
 --- This function resolves a code action and triggers a callback with the result.
@@ -58,10 +61,10 @@ end
 ---                           any error that occurred. The callback should accept two parameters:
 ---                           the result and the error.
 function M.resolve(action, bufnr, client, callback)
-  utils.add_client_methods(client)
-  client:request("codeAction/resolve", action, function(e, res)
-    callback(res, e)
-  end, bufnr)
+	utils.add_client_methods(client)
+	client:request("codeAction/resolve", action, function(e, res)
+		callback(res, e)
+	end, bufnr)
 end
 
 --- Resolves a code action in a blocking manner, waiting for the result or an error.
@@ -75,46 +78,46 @@ end
 ---                        client in use. The error is a string describing the error, or nil if no
 ---                        error occurred.
 function M.blocking_resolve(action, bufnr, client, timeout_ms)
-  local result, err = nil, nil
-  local timeout = timeout_ms or 500
-  local start_time = vim.loop.hrtime()
+	local result, err = nil, nil
+	local timeout = timeout_ms or 500
+	local start_time = vim.loop.hrtime()
 
-  utils.add_client_methods(client)
-  client:request("codeAction/resolve", action, function(e, res)
-    result, err = res, e
-  end, bufnr)
+	utils.add_client_methods(client)
+	client:request("codeAction/resolve", action, function(e, res)
+		result, err = res, e
+	end, bufnr)
 
-  while result == nil and err == nil do
-    local elapsed = (vim.loop.hrtime() - start_time) / 1000000 -- Convert to milliseconds
-    if elapsed > timeout then
-      err = "Code action resolve timeout after " .. timeout .. "ms"
-      break
-    end
+	while result == nil and err == nil do
+		local elapsed = (vim.loop.hrtime() - start_time) / 1000000 -- Convert to milliseconds
+		if elapsed > timeout then
+			err = "Code action resolve timeout after " .. timeout .. "ms"
+			break
+		end
 
-    vim.wait(10, function()
-      return result ~= nil or err ~= nil
-    end, 100)
-  end
+		vim.wait(10, function()
+			return result ~= nil or err ~= nil
+		end, 100)
+	end
 
-  return result, err
+	return result, err
 end
 
 function M.support_resolve(client, bufnr)
-  if not client then
-    return false
-  end
-  utils.add_client_methods(client)
-  local reg = client.dynamic_capabilities
-      and client.dynamic_capabilities:get("textDocument/codeAction", { bufnr = bufnr })
-    or {}
-  local support_resolve = vim.tbl_get(reg, "registerOptions", "resolveProvider")
-    or (client:supports_method("codeAction/resolve"))
+	if not client then
+		return false
+	end
+	utils.add_client_methods(client)
+	local reg = client.dynamic_capabilities
+	    and client.dynamic_capabilities:get("textDocument/codeAction", { bufnr = bufnr })
+	    or {}
+	local support_resolve = vim.tbl_get(reg, "registerOptions", "resolveProvider")
+	    or (client:supports_method("codeAction/resolve"))
 
-  return support_resolve
+	return support_resolve
 end
 
 function M.action_is_not_complete(action)
-  return action.edit == nil
+	return action.edit == nil
 end
 
 --- Applies an action with automatic resolution if needed.
@@ -123,26 +126,26 @@ end
 --- @param context table: The context in which the action is applied.
 --- @param bufnr number: The buffer number where the action is to be applied.
 function M.apply_with_resolve(action, client, context, bufnr)
-  utils.add_client_methods(client)
+	utils.add_client_methods(client)
 
-  if M.action_is_not_complete(action) and M.support_resolve(client, bufnr) then
-    client:request("codeAction/resolve", action, function(e, resolved_action)
-      if e then
-        if action.command then
-          M.apply(action, client, context, bufnr)
-        else
-          vim.notify(
-            "Error resolving action: " .. (e.message or "unknown error"),
-            vim.log.levels.ERROR
-          )
-        end
-      else
-        M.apply(resolved_action or action, client, context, bufnr)
-      end
-    end, bufnr)
-  else
-    M.apply(action, client, context, bufnr)
-  end
+	if M.action_is_not_complete(action) and M.support_resolve(client, bufnr) then
+		client:request("codeAction/resolve", action, function(e, resolved_action)
+			if e then
+				if action.command then
+					M.apply(action, client, context, bufnr)
+				else
+					vim.notify(
+						"Error resolving action: " .. (e.message or "unknown error"),
+						vim.log.levels.ERROR
+					)
+				end
+			else
+				M.apply(resolved_action or action, client, context, bufnr)
+			end
+		end, bufnr)
+	else
+		M.apply(action, client, context, bufnr)
+	end
 end
 
 --- This function generates a preview of the changes that a code action would make.
@@ -156,27 +159,27 @@ end
 ---                generated, the table will contain a single string: "No preview available for this
 ---                action".
 function M.preview(opts, action, backend, bufnr)
-  if action == nil or vim.tbl_isempty(action) then
-    return {
-      "No preview available for this action",
-      "This is due to limitations in the language server protocol client.",
-    }
-  end
+	if action == nil or vim.tbl_isempty(action) then
+		return {
+			"No preview available for this action",
+			"This is due to limitations in the language server protocol client.",
+		}
+	end
 
-  local changes = M.find_changes(action)
+	local changes = M.find_changes(action)
 
-  if not changes or vim.tbl_isempty(action) then
-    return { "No preview available for this action" }
-  end
+	if not changes or vim.tbl_isempty(action) then
+		return { "No preview available for this action" }
+	end
 
-  local normalized_changes = M.normalize_changes(changes)
-  local preview_lines = M.generate_preview_lines(normalized_changes, opts, backend, bufnr)
+	local normalized_changes = M.normalize_changes(changes)
+	local preview_lines = M.generate_preview_lines(normalized_changes, opts, backend, bufnr)
 
-  if vim.tbl_isempty(preview_lines) or preview_lines == nil then
-    return { "No preview available for this action" }
-  end
+	if vim.tbl_isempty(preview_lines) or preview_lines == nil then
+		return { "No preview available for this action" }
+	end
 
-  return preview_lines
+	return preview_lines
 end
 
 --- This function finds the changes associated with a given code action.
@@ -186,19 +189,19 @@ end
 ---                       changes are found. The structure of the table depends on the specific
 ---                       language server protocol client in use.
 function M.find_changes(action)
-  if not action or vim.tbl_isempty(action) then
-    return nil
-  end
-  local found, _, changes = utils.find_key_in_table(action, "changes")
-  if not found or changes == nil then
-    found, _, changes = utils.find_key_in_table(action, "documentChanges")
-  end
+	if not action or vim.tbl_isempty(action) then
+		return nil
+	end
+	local found, _, changes = utils.find_key_in_table(action, "changes")
+	if not found or changes == nil then
+		found, _, changes = utils.find_key_in_table(action, "documentChanges")
+	end
 
-  if not action or not changes or not found or vim.tbl_isempty(changes or {}) then
-    return nil
-  end
+	if not action or not changes or not found or vim.tbl_isempty(changes or {}) then
+		return nil
+	end
 
-  return changes
+	return changes
 end
 
 --- This function normalizes the changes associated with a code action.
@@ -208,22 +211,22 @@ end
 --- @return table: A table representing the normalized changes. The structure of the table depends
 ---                on the specific language server protocol client in use.
 function M.normalize_changes(changes)
-  local normalized = {}
+	local normalized = {}
 
-  if type(changes[1]) == "table" then
-    for _, change in ipairs(changes) do
-      if change.edits then
-        normalized[change.textDocument.uri] = change.edits
-      elseif change.textChanges then
-        local uri = utils.path_to_uri(change.fileName)
-        normalized[uri] = change.textChanges
-      end
-    end
-  else
-    normalized = changes
-  end
+	if type(changes[1]) == "table" then
+		for _, change in ipairs(changes) do
+			if change.edits then
+				normalized[change.textDocument.uri] = change.edits
+			elseif change.textChanges then
+				local uri = utils.path_to_uri(change.fileName)
+				normalized[uri] = change.textChanges
+			end
+		end
+	else
+		normalized = changes
+	end
 
-  return normalized
+	return normalized
 end
 
 --- This function generates preview lines for a given set of changes.
@@ -237,29 +240,29 @@ end
 ---                generated for a change, the table will contain a single string: "No preview
 ---                available for this change".
 function M.generate_preview_lines(changes, opts, backend, bufnr)
-  local preview_lines = {}
-  local utils = require("tiny-code-action.utils")
+	local preview_lines = {}
+	local utils = require("tiny-code-action.utils")
 
-  for uri, edits in pairs(changes) do
-    local lines = M.get_file_lines(uri, bufnr)
+	for uri, edits in pairs(changes) do
+		local lines = M.get_file_lines(uri, bufnr)
 
-    -- Deep copy edits and strip snippet syntax for preview
-    local preview_edits = vim.deepcopy(edits)
-    for _, edit in ipairs(preview_edits) do
-      edit.newText = utils.strip_snippet_syntax(edit.newText)
-    end
+		-- Deep copy edits and strip snippet syntax for preview
+		local preview_edits = vim.deepcopy(edits)
+		for _, edit in ipairs(preview_edits) do
+			edit.newText = utils.strip_snippet_syntax(edit.newText)
+		end
 
-    local new_lines = apply_edit(vim.deepcopy(lines), preview_edits)
-    local diff = backend.get_diff(bufnr, lines, new_lines, opts)
+		local new_lines = apply_edit(vim.deepcopy(lines), preview_edits)
+		local diff = backend.get_diff(bufnr, lines, new_lines, opts)
 
-    if type(diff) == "string" then
-      diff = vim.split(diff, "\n")
-    end
+		if type(diff) == "string" then
+			diff = vim.split(diff, "\n")
+		end
 
-    vim.list_extend(preview_lines, diff)
-  end
+		vim.list_extend(preview_lines, diff)
+	end
 
-  return preview_lines
+	return preview_lines
 end
 
 --- This function retrieves the lines of a file identified by a given URI.
@@ -270,18 +273,18 @@ end
 --- @return table: A table of strings representing the lines of the file. If the file does not exist,
 ---                an empty table is returned.
 function M.get_file_lines(uri, bufnr)
-  local current_bufnr = vim.uri_to_bufnr(uri)
+	local current_bufnr = vim.uri_to_bufnr(uri)
 
-  if current_bufnr == bufnr then
-    return vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  else
-    local fname = vim.uri_to_fname(uri)
-    if not vim.loop.fs_stat(fname) then
-      return {}
-    else
-      return vim.fn.readfile(fname)
-    end
-  end
+	if current_bufnr == bufnr then
+		return vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	else
+		local fname = vim.uri_to_fname(uri)
+		if not vim.loop.fs_stat(fname) then
+			return {}
+		else
+			return vim.fn.readfile(fname)
+		end
+	end
 end
 
 return M
